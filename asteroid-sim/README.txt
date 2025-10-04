@@ -21,8 +21,6 @@ Visualize orbital paths, impacts, and mitigation strategies in 3D.
 ## 🧰 Setup
 
 ```bash
-git clone https://github.com/<your-username>/asteroid-impact-simulator.git
-cd asteroid-impact-simulator/backend
-pip install -r requirements.txt
-export NASA_API_KEY="your_api_key"
-python app.py
+git clone https://github.com/terezkaa74/astrosim.git
+cd astrosim/backend
+
