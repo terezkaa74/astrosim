@@ -3,6 +3,8 @@ from physics.orbit import propagate_orbit_rk4, orbital_elements_to_state
 from physics.impact import compute_impact_effects
 from nasa_api import fetch_neo_data
 import os
+NASA_API_KEY="JDkBDCKmphzRGeZy40LmFthbebXtxgj4KegiSP1G"
+
 
 app = Flask(__name__, static_folder="../frontend", static_url_path="/")
 
@@ -54,3 +56,4 @@ def serve(path):
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
