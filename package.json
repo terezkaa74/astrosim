@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build && electron-builder",
-    "electron:dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "backend": "node start-backend.js",
+    "electron:dev": "concurrently \"npm run backend\" \"vite\" \"wait-on http://localhost:8000 http://localhost:5173 && electron .\"",
     "electron:build": "vite build && electron-builder",
     "preview": "vite preview"
   },
