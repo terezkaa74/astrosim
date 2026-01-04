@@ -59,53 +59,45 @@ class LLMService:
                 temperature=0.7,
                 top_p=0.9,
                 echo=False,
-                stop=["</s>", "Human:", "User:"]
+                stop=["</s>", "\n\nQuestion:", "\n\nContext:", "\n\nDocument:", "###"]
             )
-            return output['choices'][0]['text'].strip()
+            response_text = output['choices'][0]['text'].strip()
+
+            if not response_text or len(response_text) < 10:
+                return "I apologize, but I was unable to generate a proper response. Please try rephrasing your question."
+
+            return response_text
         except Exception as e:
+            print(f"LLM generation error: {e}")
             return f"Error generating response: {str(e)}"
 
     def summarize(self, text: str, max_length: int = 300) -> str:
         if len(text) > 8000:
             text = text[:8000]
 
-        prompt = f"""<|system|>
-You are a helpful assistant that creates concise summaries of academic papers and documents.
-</|system|>
+        prompt = f"""You are a helpful assistant. Create a concise summary of the following document.
 
-<|user|>
-Please provide a concise summary of the following text. Focus on the main points, key findings, and conclusions.
-
-Text:
+Document:
 {text}
 
-Summary:
-</|user|>
+Provide a clear summary covering the main points, key findings, and conclusions:"""
 
-<|assistant|>"""
-
-        return self._generate(prompt, max_tokens=400)
+        return self._generate(prompt, max_tokens=500)
 
     def answer_question(self, question: str, context: str) -> str:
         if len(context) > 6000:
             context = context[:6000]
 
-        prompt = f"""<|system|>
-You are a helpful assistant that answers questions based on the provided document context. Only use information from the context to answer questions.
-</|system|>
+        prompt = f"""Answer the following question based only on the provided context from a document.
 
-<|user|>
 Context:
 {context}
 
 Question: {question}
 
-Please provide a clear and concise answer based only on the information in the context above.
-</|user|>
+Answer:"""
 
-<|assistant|>"""
-
-        return self._generate(prompt, max_tokens=300)
+        return self._generate(prompt, max_tokens=350)
 
     def chat(self, message: str, document_context: str) -> str:
         if len(document_context) > 5000:

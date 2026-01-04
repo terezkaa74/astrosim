@@ -1,7 +1,16 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 export default function ChatPanel({ onAskQuestion, messages, isProcessing }) {
   const [question, setQuestion] = useState('');
+  const messagesEndRef = useRef(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -15,7 +24,7 @@ export default function ChatPanel({ onAskQuestion, messages, isProcessing }) {
     <div className="chat-panel">
       <div className="chat-header">
         <h3>Ask Questions</h3>
-        <p>Questions are answered using only the PDF content</p>
+        <p>Questions are answered using the local LLM based on the PDF content</p>
       </div>
 
       <div className="messages-container">
@@ -25,21 +34,38 @@ export default function ChatPanel({ onAskQuestion, messages, isProcessing }) {
             <div className="sample-questions">
               <p className="sample-label">Try asking:</p>
               <ul>
-                <li>What is the main finding?</li>
-                <li>What methods were used?</li>
-                <li>What are the conclusions?</li>
+                <li>What is the main finding of this paper?</li>
+                <li>What methods or approaches were used?</li>
+                <li>What are the key conclusions?</li>
+                <li>What problem does this paper address?</li>
               </ul>
             </div>
           </div>
         ) : (
-          messages.map((msg, index) => (
-            <div key={index} className={`message ${msg.type}`}>
-              <div className="message-label">
-                {msg.type === 'question' ? 'You' : 'Answer'}
+          <>
+            {messages.map((msg, index) => (
+              <div key={index} className={`message ${msg.type}`}>
+                <div className="message-label">
+                  {msg.type === 'question' ? 'You' : 'LLM Answer'}
+                </div>
+                <div className="message-content">
+                  {msg.content.split('\n').map((line, i) => (
+                    line.trim() && <p key={i}>{line}</p>
+                  ))}
+                </div>
               </div>
-              <div className="message-content">{msg.content}</div>
-            </div>
-          ))
+            ))}
+            {isProcessing && (
+              <div className="message answer">
+                <div className="message-label">LLM Answer</div>
+                <div className="message-content message-loading">
+                  <div className="spinner-small"></div>
+                  <span>Generating answer... This may take 5-30 seconds</span>
+                </div>
+              </div>
+            )}
+            <div ref={messagesEndRef} />
+          </>
         )}
       </div>
 

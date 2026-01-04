@@ -16,19 +16,30 @@ function App() {
   const [summary, setSummary] = useState(null);
   const [messages, setMessages] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isAnswering, setIsAnswering] = useState(false);
   const [view, setView] = useState('document');
   const [modelStatus, setModelStatus] = useState('checking');
 
   useEffect(() => {
     checkBackendHealth();
+    const interval = setInterval(checkBackendHealth, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   const checkBackendHealth = async () => {
     try {
-      const response = await fetch(`${BACKEND_URL}/health`);
+      const response = await fetch(`${BACKEND_URL}/health`, {
+        signal: AbortSignal.timeout(5000)
+      });
+
+      if (!response.ok) {
+        throw new Error('Backend not responding');
+      }
+
       const data = await response.json();
       setModelStatus(data.model_loaded ? 'ready' : 'not_loaded');
     } catch (error) {
+      console.error('Backend health check failed:', error);
       setModelStatus('error');
     }
   };
@@ -36,64 +47,136 @@ function App() {
   const handleUpload = async (file) => {
     setIsProcessing(true);
     setMessages([]);
+    setSummary(null);
 
     try {
+      console.log('Uploading PDF:', file.name);
+
       const formData = new FormData();
       formData.append('file', file);
 
-      const response = await fetch(`${BACKEND_URL}/extract-text`, {
+      const extractResponse = await fetch(`${BACKEND_URL}/extract-text`, {
         method: 'POST',
         body: formData,
       });
 
-      if (!response.ok) {
-        throw new Error('Failed to extract PDF text');
+      if (!extractResponse.ok) {
+        const errorText = await extractResponse.text();
+        throw new Error(`PDF extraction failed: ${errorText}`);
       }
 
-      const { text, filename } = await response.json();
+      const { text, filename } = await extractResponse.json();
+
+      if (!text || text.trim().length === 0) {
+        throw new Error('No text could be extracted from this PDF');
+      }
+
+      console.log('PDF text extracted, length:', text.length);
 
       const detectedStructure = detectStructure(text);
       const detectedTables = extractTables(text);
 
-      const summaryResponse = await fetch(`${BACKEND_URL}/summarize`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: text.substring(0, 8000) }),
-      });
-
-      const { summary: generatedSummary } = await summaryResponse.json();
-
       setPdfData({ fullText: text, filename });
       setStructure(detectedStructure);
       setTables(detectedTables);
-      setSummary(generatedSummary);
       setView('document');
+
+      console.log('Generating summary...');
+      const textForSummary = text.substring(0, 8000);
+
+      const summaryResponse = await fetch(`${BACKEND_URL}/summarize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: textForSummary }),
+      });
+
+      if (!summaryResponse.ok) {
+        const errorText = await summaryResponse.text();
+        console.error('Summary generation failed:', errorText);
+        setSummary('Summary generation failed. The LLM may be experiencing issues.');
+      } else {
+        const summaryData = await summaryResponse.json();
+        const generatedSummary = summaryData.summary || summaryData;
+
+        if (typeof generatedSummary === 'string' && generatedSummary.trim().length > 0) {
+          console.log('Summary generated successfully');
+          setSummary(generatedSummary);
+        } else {
+          console.warn('Summary response was empty or invalid');
+          setSummary('Summary could not be generated for this document.');
+        }
+      }
+
     } catch (error) {
-      alert(error.message);
+      console.error('Upload error:', error);
+      alert(`Error: ${error.message}`);
+      setPdfData(null);
+      setStructure(null);
+      setTables([]);
+      setSummary(null);
     } finally {
       setIsProcessing(false);
     }
   };
 
   const handleAskQuestion = async (question) => {
-    if (!pdfData) return;
+    if (!pdfData || !pdfData.fullText) {
+      console.error('No PDF data available');
+      return;
+    }
+
+    if (modelStatus !== 'ready') {
+      setMessages(prev => [...prev,
+        { type: 'question', content: question },
+        { type: 'answer', content: 'Error: LLM model is not ready. Please check that a model file is loaded.' }
+      ]);
+      return;
+    }
 
     setMessages(prev => [...prev, { type: 'question', content: question }]);
+    setIsAnswering(true);
 
     try {
+      console.log('Asking question:', question);
+
+      const contextText = pdfData.fullText.substring(0, 6000);
+
       const response = await fetch(`${BACKEND_URL}/answer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          question,
-          context: pdfData.fullText.substring(0, 6000),
+          question: question.trim(),
+          context: contextText,
         }),
       });
 
-      const { answer } = await response.json();
-      setMessages(prev => [...prev, { type: 'answer', content: answer }]);
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Backend returned ${response.status}: ${errorText}`);
+      }
+
+      const data = await response.json();
+      const answer = data.answer || data;
+
+      if (typeof answer === 'string' && answer.trim().length > 0) {
+        console.log('Answer received, length:', answer.length);
+        setMessages(prev => [...prev, { type: 'answer', content: answer.trim() }]);
+      } else {
+        console.warn('Answer was empty or invalid:', answer);
+        setMessages(prev => [...prev, {
+          type: 'answer',
+          content: 'I apologize, but I could not generate a proper answer. Please try rephrasing your question.'
+        }]);
+      }
+
     } catch (error) {
-      setMessages(prev => [...prev, { type: 'answer', content: 'Error: Failed to get answer from LLM.' }]);
+      console.error('Question answering error:', error);
+      setMessages(prev => [...prev, {
+        type: 'answer',
+        content: `Error: ${error.message}. Please check that the backend is running and the model is loaded.`
+      }]);
+    } finally {
+      setIsAnswering(false);
     }
   };
 
@@ -179,13 +262,17 @@ function App() {
                 <DocumentPanel pdfData={pdfData} structure={structure} tables={tables} />
               )}
               {view === 'summary' && (
-                <SummaryPanel summary={summary} onExport={handleExport} />
+                <SummaryPanel
+                  summary={summary}
+                  onExport={handleExport}
+                  isLoading={isProcessing}
+                />
               )}
               {view === 'chat' && (
                 <ChatPanel
                   onAskQuestion={handleAskQuestion}
                   messages={messages}
-                  isProcessing={false}
+                  isProcessing={isAnswering}
                 />
               )}
             </div>
