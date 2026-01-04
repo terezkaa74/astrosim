@@ -43,11 +43,13 @@ npm run electron:dev
 ```
 
 This automatically:
+- ✅ Checks and cleans up any port conflicts
+- ✅ Kills existing backend processes (prevents crashes)
 - ✅ Starts the Python backend in the correct virtual environment
 - ✅ Starts the Vite development server
 - ✅ Opens the Electron desktop app
 
-**Note:** The backend starts automatically! No need to open multiple terminals or manually activate the venv.
+**Note:** The backend starts automatically with smart conflict resolution! No more port errors, 405 spam, or multiple instances running.
 
 ## First Use
 

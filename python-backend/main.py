@@ -1,7 +1,16 @@
+"""
+Offline PDF Reader with Local LLM - Backend Server
+Copyright (c) 2024-2026 Tereza Gorgolova
+All rights reserved.
+
+This file is part of Offline PDF Reader created by Tereza Gorgolova
+"""
+
 import os
 import sys
 import argparse
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, File, UploadFile, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
@@ -10,7 +19,20 @@ from typing import Optional
 from llm_service import LLMService
 from pdf_service import PDFService
 
-app = FastAPI()
+llm_service: Optional[LLMService] = None
+pdf_service = PDFService()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global llm_service
+    models_path = os.environ.get("MODELS_PATH", "./models")
+    print(f"Initializing LLM service with models path: {models_path}")
+    llm_service = LLMService(models_path)
+    print("LLM service initialized successfully")
+    yield
+    print("Shutting down LLM service...")
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -20,9 +42,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-llm_service: Optional[LLMService] = None
-pdf_service = PDFService()
-
 class QuestionRequest(BaseModel):
     question: str
     context: str
@@ -30,23 +49,17 @@ class QuestionRequest(BaseModel):
 class SummaryRequest(BaseModel):
     text: str
 
-@app.on_event("startup")
-async def startup_event():
-    global llm_service
-    models_path = os.environ.get("MODELS_PATH", "./models")
-    print(f"Initializing LLM service with models path: {models_path}")
-    llm_service = LLMService(models_path)
-    print("LLM service initialized successfully")
-
 @app.get("/")
+@app.head("/")
 async def root():
     return {"status": "running", "message": "PDF Reader Backend with Local LLM"}
 
 @app.get("/health")
+@app.head("/health")
 async def health():
     model_loaded = llm_service is not None and llm_service.is_model_loaded()
     return {
-        "status": "healthy",
+        "status": "ok",
         "model_loaded": model_loaded
     }
 
