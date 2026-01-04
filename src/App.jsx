@@ -1,12 +1,13 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import PDFUploader from './components/PDFUploader';
 import DocumentPanel from './components/DocumentPanel';
 import ChatPanel from './components/ChatPanel';
 import SummaryPanel from './components/SummaryPanel';
-import { extractPDFContent, detectStructure, extractTables } from './utils/pdfProcessor';
-import { findRelevantContext, generateAnswer, generateSummary } from './utils/textAnalyzer';
+import { detectStructure, extractTables } from './utils/pdfProcessor';
 import { exportAsText, exportAsMarkdown, exportTablesAsCSV, downloadFile } from './utils/exportUtils';
 import './App.css';
+
+const BACKEND_URL = 'http://localhost:8000';
 
 function App() {
   const [pdfData, setPdfData] = useState(null);
@@ -16,18 +17,53 @@ function App() {
   const [messages, setMessages] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [view, setView] = useState('document');
+  const [modelStatus, setModelStatus] = useState('checking');
+
+  useEffect(() => {
+    checkBackendHealth();
+  }, []);
+
+  const checkBackendHealth = async () => {
+    try {
+      const response = await fetch(`${BACKEND_URL}/health`);
+      const data = await response.json();
+      setModelStatus(data.model_loaded ? 'ready' : 'not_loaded');
+    } catch (error) {
+      setModelStatus('error');
+    }
+  };
 
   const handleUpload = async (file) => {
     setIsProcessing(true);
     setMessages([]);
 
     try {
-      const extracted = await extractPDFContent(file);
-      const detectedStructure = detectStructure(extracted.fullText);
-      const detectedTables = extractTables(extracted.fullText);
-      const generatedSummary = generateSummary(detectedStructure);
+      const formData = new FormData();
+      formData.append('file', file);
 
-      setPdfData(extracted);
+      const response = await fetch(`${BACKEND_URL}/extract-text`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to extract PDF text');
+      }
+
+      const { text, filename } = await response.json();
+
+      const detectedStructure = detectStructure(text);
+      const detectedTables = extractTables(text);
+
+      const summaryResponse = await fetch(`${BACKEND_URL}/summarize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text.substring(0, 8000) }),
+      });
+
+      const { summary: generatedSummary } = await summaryResponse.json();
+
+      setPdfData({ fullText: text, filename });
       setStructure(detectedStructure);
       setTables(detectedTables);
       setSummary(generatedSummary);
@@ -39,17 +75,26 @@ function App() {
     }
   };
 
-  const handleAskQuestion = (question) => {
+  const handleAskQuestion = async (question) => {
     if (!pdfData) return;
 
     setMessages(prev => [...prev, { type: 'question', content: question }]);
 
-    setTimeout(() => {
-      const context = findRelevantContext(question, structure.sections, pdfData.fullText);
-      const answer = generateAnswer(question, context);
+    try {
+      const response = await fetch(`${BACKEND_URL}/answer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question,
+          context: pdfData.fullText.substring(0, 6000),
+        }),
+      });
 
+      const { answer } = await response.json();
       setMessages(prev => [...prev, { type: 'answer', content: answer }]);
-    }, 500);
+    } catch (error) {
+      setMessages(prev => [...prev, { type: 'answer', content: 'Error: Failed to get answer from LLM.' }]);
+    }
   };
 
   const handleExport = (format) => {
@@ -149,7 +194,13 @@ function App() {
       )}
 
       <footer className="app-footer">
-        <p>100% Offline • No APIs • No Internet Required</p>
+        <p>100% Offline • Local LLM • No Internet Required</p>
+        <div className="model-status">
+          {modelStatus === 'ready' && <span className="status-ready">LLM Ready</span>}
+          {modelStatus === 'not_loaded' && <span className="status-warning">Model Not Found - Place GGUF in models/</span>}
+          {modelStatus === 'error' && <span className="status-error">Backend Not Running</span>}
+          {modelStatus === 'checking' && <span className="status-checking">Checking...</span>}
+        </div>
       </footer>
     </div>
   );
