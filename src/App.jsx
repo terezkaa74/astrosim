@@ -1,74 +1,92 @@
-import { useState, useEffect } from 'react';
+/*
+ * Offline PDF Reader with Local LLM
+ * Copyright (c) 2024-2026 Tereza Gorgolova
+ * All rights reserved.
+ *
+ * This file is part of Offline PDF Reader created by Tereza Gorgolova
+ */
+
+import { useState, useEffect, useCallback } from 'react';
 import PDFUploader from './components/PDFUploader';
 import DocumentPanel from './components/DocumentPanel';
 import ChatPanel from './components/ChatPanel';
 import SummaryPanel from './components/SummaryPanel';
 import { detectStructure, extractTables } from './utils/pdfProcessor';
 import { exportAsText, exportAsMarkdown, exportTablesAsCSV, downloadFile } from './utils/exportUtils';
+import { checkHealth, extractText, generateSummary, askQuestion } from './utils/apiClient';
 import './App.css';
-
-const BACKEND_URL = 'http://localhost:8000';
 
 function App() {
   const [pdfData, setPdfData] = useState(null);
   const [structure, setStructure] = useState(null);
   const [tables, setTables] = useState([]);
   const [summary, setSummary] = useState(null);
+  const [summaryError, setSummaryError] = useState(null);
   const [messages, setMessages] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isSummarizing, setIsSummarizing] = useState(false);
   const [isAnswering, setIsAnswering] = useState(false);
   const [view, setView] = useState('document');
   const [modelStatus, setModelStatus] = useState('checking');
 
   useEffect(() => {
-    checkBackendHealth();
-    const interval = setInterval(checkBackendHealth, 30000);
+    performHealthCheck();
+    const interval = setInterval(performHealthCheck, 30000);
     return () => clearInterval(interval);
   }, []);
 
-  const checkBackendHealth = async () => {
-    try {
-      const response = await fetch(`${BACKEND_URL}/health`, {
-        signal: AbortSignal.timeout(5000)
-      });
+  const performHealthCheck = async () => {
+    const health = await checkHealth();
 
-      if (!response.ok) {
-        throw new Error('Backend not responding');
-      }
-
-      const data = await response.json();
-      setModelStatus(data.model_loaded ? 'ready' : 'not_loaded');
-    } catch (error) {
-      console.error('Backend health check failed:', error);
+    if (!health.healthy) {
       setModelStatus('error');
+    } else if (!health.modelLoaded) {
+      setModelStatus('not_loaded');
+    } else {
+      setModelStatus('ready');
     }
   };
+
+  const handleGenerateSummary = useCallback(async (text) => {
+    if (!text || text.trim().length === 0) {
+      setSummaryError('No text available to summarize.');
+      return;
+    }
+
+    setIsSummarizing(true);
+    setSummary(null);
+    setSummaryError(null);
+
+    console.log('Generating summary...');
+
+    const result = await generateSummary(text);
+
+    if (result.success && result.summary) {
+      console.log('Summary generated successfully');
+      setSummary(result.summary);
+      setSummaryError(null);
+    } else {
+      console.error('Summary generation failed:', result.error);
+      setSummary(null);
+      setSummaryError(result.error || 'Failed to generate summary. Please try again.');
+    }
+
+    setIsSummarizing(false);
+  }, []);
 
   const handleUpload = async (file) => {
     setIsProcessing(true);
     setMessages([]);
     setSummary(null);
+    setSummaryError(null);
 
     try {
       console.log('Uploading PDF:', file.name);
 
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const extractResponse = await fetch(`${BACKEND_URL}/extract-text`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!extractResponse.ok) {
-        const errorText = await extractResponse.text();
-        throw new Error(`PDF extraction failed: ${errorText}`);
-      }
-
-      const { text, filename } = await extractResponse.json();
+      const { text, filename } = await extractText(file);
 
       if (!text || text.trim().length === 0) {
-        throw new Error('No text could be extracted from this PDF');
+        throw new Error('No text could be extracted from this PDF. It may be image-based or encrypted.');
       }
 
       console.log('PDF text extracted, length:', text.length);
@@ -81,31 +99,9 @@ function App() {
       setTables(detectedTables);
       setView('document');
 
-      console.log('Generating summary...');
-      const textForSummary = text.substring(0, 8000);
+      setIsProcessing(false);
 
-      const summaryResponse = await fetch(`${BACKEND_URL}/summarize`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: textForSummary }),
-      });
-
-      if (!summaryResponse.ok) {
-        const errorText = await summaryResponse.text();
-        console.error('Summary generation failed:', errorText);
-        setSummary('Summary generation failed. The LLM may be experiencing issues.');
-      } else {
-        const summaryData = await summaryResponse.json();
-        const generatedSummary = summaryData.summary || summaryData;
-
-        if (typeof generatedSummary === 'string' && generatedSummary.trim().length > 0) {
-          console.log('Summary generated successfully');
-          setSummary(generatedSummary);
-        } else {
-          console.warn('Summary response was empty or invalid');
-          setSummary('Summary could not be generated for this document.');
-        }
-      }
+      handleGenerateSummary(text);
 
     } catch (error) {
       console.error('Upload error:', error);
@@ -114,10 +110,16 @@ function App() {
       setStructure(null);
       setTables([]);
       setSummary(null);
-    } finally {
+      setSummaryError(null);
       setIsProcessing(false);
     }
   };
+
+  const handleRetryGenrateSummary = useCallback(() => {
+    if (pdfData && pdfData.fullText) {
+      handleGenerateSummary(pdfData.fullText);
+    }
+  }, [pdfData, handleGenerateSummary]);
 
   const handleAskQuestion = async (question) => {
     if (!pdfData || !pdfData.fullText) {
@@ -128,7 +130,7 @@ function App() {
     if (modelStatus !== 'ready') {
       setMessages(prev => [...prev,
         { type: 'question', content: question },
-        { type: 'answer', content: 'Error: LLM model is not ready. Please check that a model file is loaded.' }
+        { type: 'answer', content: 'The AI model is not ready. Please check that a .gguf model file is loaded in the models directory.', isError: true }
       ]);
       return;
     }
@@ -136,62 +138,37 @@ function App() {
     setMessages(prev => [...prev, { type: 'question', content: question }]);
     setIsAnswering(true);
 
-    try {
-      console.log('Asking question:', question);
+    console.log('Asking question:', question);
 
-      const contextText = pdfData.fullText.substring(0, 6000);
+    const result = await askQuestion(question, pdfData.fullText);
 
-      const response = await fetch(`${BACKEND_URL}/answer`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          question: question.trim(),
-          context: contextText,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Backend returned ${response.status}: ${errorText}`);
-      }
-
-      const data = await response.json();
-      const answer = data.answer || data;
-
-      if (typeof answer === 'string' && answer.trim().length > 0) {
-        console.log('Answer received, length:', answer.length);
-        setMessages(prev => [...prev, { type: 'answer', content: answer.trim() }]);
-      } else {
-        console.warn('Answer was empty or invalid:', answer);
-        setMessages(prev => [...prev, {
-          type: 'answer',
-          content: 'I apologize, but I could not generate a proper answer. Please try rephrasing your question.'
-        }]);
-      }
-
-    } catch (error) {
-      console.error('Question answering error:', error);
+    if (result.success && result.answer) {
+      console.log('Answer received');
+      setMessages(prev => [...prev, { type: 'answer', content: result.answer }]);
+    } else {
+      console.error('Question answering failed:', result.error);
       setMessages(prev => [...prev, {
         type: 'answer',
-        content: `Error: ${error.message}. Please check that the backend is running and the model is loaded.`
+        content: result.error || 'Failed to get an answer. Please try again.',
+        isError: true
       }]);
-    } finally {
-      setIsAnswering(false);
     }
+
+    setIsAnswering(false);
   };
 
   const handleExport = (format) => {
-    if (!structure || !summary) return;
+    if (!structure) return;
 
     const baseFilename = pdfData?.filename?.replace('.pdf', '') || 'document';
 
     switch (format) {
       case 'txt':
-        const textContent = exportAsText(structure, summary);
+        const textContent = exportAsText(structure, summary || '');
         downloadFile(textContent, `${baseFilename}_summary.txt`, 'text/plain');
         break;
       case 'md':
-        const mdContent = exportAsMarkdown(structure, summary);
+        const mdContent = exportAsMarkdown(structure, summary || '');
         downloadFile(mdContent, `${baseFilename}_summary.md`, 'text/markdown');
         break;
       case 'csv':
@@ -247,6 +224,7 @@ function App() {
               onClick={() => setView('summary')}
             >
               Summary
+              {isSummarizing && <span className="tab-loading"></span>}
             </button>
             <button
               className={view === 'chat' ? 'active' : ''}
@@ -264,8 +242,10 @@ function App() {
               {view === 'summary' && (
                 <SummaryPanel
                   summary={summary}
+                  summaryError={summaryError}
                   onExport={handleExport}
-                  isLoading={isProcessing}
+                  isLoading={isSummarizing}
+                  onRetry={handleRetryGenrateSummary}
                 />
               )}
               {view === 'chat' && (
@@ -281,7 +261,7 @@ function App() {
       )}
 
       <footer className="app-footer">
-        <p>100% Offline • Local LLM • No Internet Required</p>
+        <p>100% Offline • Local LLM • No Internet Required • Created by Tereza Gorgolova</p>
         <div className="model-status">
           {modelStatus === 'ready' && <span className="status-ready">LLM Ready</span>}
           {modelStatus === 'not_loaded' && <span className="status-warning">Model Not Found - Place GGUF in models/</span>}

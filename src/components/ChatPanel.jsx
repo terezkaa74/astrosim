@@ -44,9 +44,9 @@ export default function ChatPanel({ onAskQuestion, messages, isProcessing }) {
         ) : (
           <>
             {messages.map((msg, index) => (
-              <div key={index} className={`message ${msg.type}`}>
+              <div key={index} className={`message ${msg.type} ${msg.isError ? 'error' : ''}`}>
                 <div className="message-label">
-                  {msg.type === 'question' ? 'You' : 'LLM Answer'}
+                  {msg.type === 'question' ? 'You' : msg.isError ? 'Error' : 'LLM Answer'}
                 </div>
                 <div className="message-content">
                   {msg.content.split('\n').map((line, i) => (
