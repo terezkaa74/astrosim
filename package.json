@@ -2,12 +2,14 @@
   "name": "offline-pdf-reader",
   "private": true,
   "version": "1.0.0",
+  "author": "Tereza Gorgolova",
+  "description": "Offline PDF Reader with Local LLM - Created by Tereza Gorgolova",
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "vite build && electron-builder",
     "backend": "node start-backend.js",
-    "electron:dev": "concurrently \"npm run backend\" \"vite\" \"wait-on http://localhost:8000 http://localhost:5173 && electron .\"",
+    "electron:dev": "concurrently -k \"npm run backend\" \"vite\" \"wait-on http-get://localhost:8000/health http-get://localhost:5173 && electron .\"",
     "electron:build": "vite build && electron-builder",
     "preview": "vite preview"
   },
