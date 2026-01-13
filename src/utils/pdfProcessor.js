@@ -1,3 +1,9 @@
+/*
+ * Offline PDF Reader with Local LLM - PDF Processor
+ * Copyright (c) 2024-2026 Tereza Gorgolova
+ * All rights reserved.
+ */
+
 import * as pdfjsLib from 'pdfjs-dist';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js`;
@@ -37,61 +43,61 @@ export function detectStructure(text) {
     title: '',
     abstract: '',
     sections: [],
-    paragraphs: []
+    fullText: text
   };
 
   if (lines.length > 0) {
-    structure.title = lines[0].trim();
+    const firstLine = lines[0].trim();
+    structure.title = firstLine.length > 100 ? firstLine.substring(0, 100) + '...' : firstLine;
   }
 
-  const abstractRegex = /abstract/i;
-  const sectionRegex = /^(\d+\.?\s+|[A-Z][A-Z\s]+:|\b(introduction|methods?|results?|discussion|conclusion|references)\b)/i;
+  const abstractStart = text.toLowerCase().indexOf('abstract');
+  if (abstractStart !== -1) {
+    const abstractEnd = Math.min(abstractStart + 800, text.length);
+    let abstract = text.substring(abstractStart, abstractEnd).trim();
 
-  let currentSection = null;
-  let abstractFound = false;
-  let abstractText = [];
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-
-    if (!abstractFound && abstractRegex.test(line)) {
-      abstractFound = true;
-      continue;
+    const nextSectionMatch = abstract.match(/\n\s*(introduction|background|methods?|1\.?\s)/i);
+    if (nextSectionMatch) {
+      abstract = abstract.substring(0, nextSectionMatch.index);
     }
 
-    if (abstractFound && !structure.abstract) {
-      if (sectionRegex.test(line)) {
-        structure.abstract = abstractText.join(' ').trim();
-        abstractFound = false;
-      } else {
-        abstractText.push(line);
-        if (abstractText.join(' ').length > 500) {
-          structure.abstract = abstractText.join(' ').trim();
-          abstractFound = false;
-        }
-      }
-    }
-
-    if (sectionRegex.test(line) && line.length < 100) {
-      if (currentSection) {
-        structure.sections.push(currentSection);
-      }
-      currentSection = {
-        heading: line,
-        content: []
-      };
-    } else if (currentSection) {
-      currentSection.content.push(line);
-    } else {
-      structure.paragraphs.push(line);
-    }
+    abstract = abstract.replace(/^abstract:?\s*/i, '').trim();
+    structure.abstract = abstract;
   }
 
-  if (currentSection) {
-    structure.sections.push(currentSection);
+  const paragraphs = text.split('\n\n').filter(p => p.trim().length > 50);
+
+  const maxSections = 5;
+  const sectionSize = Math.ceil(paragraphs.length / maxSections);
+
+  for (let i = 0; i < maxSections && i * sectionSize < paragraphs.length; i++) {
+    const startIdx = i * sectionSize;
+    const endIdx = Math.min(startIdx + sectionSize, paragraphs.length);
+    const sectionParagraphs = paragraphs.slice(startIdx, endIdx);
+
+    if (sectionParagraphs.length > 0) {
+      const heading = getSectionHeading(i, maxSections, sectionParagraphs[0]);
+      const content = sectionParagraphs.join('\n\n');
+
+      structure.sections.push({
+        heading,
+        content
+      });
+    }
   }
 
   return structure;
+}
+
+function getSectionHeading(index, total, firstParagraph) {
+  if (index === 0) {
+    return 'Beginning';
+  } else if (index === total - 1) {
+    return 'Conclusion';
+  } else {
+    const percentage = Math.round((index / (total - 1)) * 100);
+    return `Section ${index + 1} (~${percentage}% through)`;
+  }
 }
 
 export function extractTables(text) {

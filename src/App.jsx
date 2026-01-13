@@ -13,7 +13,7 @@ import ChatPanel from './components/ChatPanel';
 import SummaryPanel from './components/SummaryPanel';
 import { detectStructure, extractTables } from './utils/pdfProcessor';
 import { exportAsText, exportAsMarkdown, exportTablesAsCSV, downloadFile } from './utils/exportUtils';
-import { checkHealth, extractText, generateSummary, askQuestion } from './utils/apiClient';
+import { checkHealth, extractText, generateSummary, askQuestion, askQuestionStream } from './utils/apiClient';
 import './App.css';
 
 function App() {
@@ -138,23 +138,61 @@ function App() {
     setMessages(prev => [...prev, { type: 'question', content: question }]);
     setIsAnswering(true);
 
-    console.log('Asking question:', question);
+    console.log('Asking question with streaming:', question);
 
-    const result = await askQuestion(question, pdfData.fullText);
+    let streamedAnswer = '';
+    const answerIndex = messages.length + 1;
 
-    if (result.success && result.answer) {
-      console.log('Answer received');
-      setMessages(prev => [...prev, { type: 'answer', content: result.answer }]);
-    } else {
-      console.error('Question answering failed:', result.error);
-      setMessages(prev => [...prev, {
-        type: 'answer',
-        content: result.error || 'Failed to get an answer. Please try again.',
-        isError: true
-      }]);
-    }
+    askQuestionStream(
+      question,
+      pdfData.fullText,
+      (chunk) => {
+        streamedAnswer += chunk;
+        setMessages(prev => {
+          const newMessages = [...prev];
+          const existingAnswerIndex = newMessages.findIndex(
+            (msg, idx) => idx === answerIndex && msg.type === 'answer'
+          );
 
-    setIsAnswering(false);
+          if (existingAnswerIndex !== -1) {
+            newMessages[existingAnswerIndex] = {
+              type: 'answer',
+              content: streamedAnswer,
+              isStreaming: true
+            };
+          } else {
+            newMessages.push({
+              type: 'answer',
+              content: streamedAnswer,
+              isStreaming: true
+            });
+          }
+
+          return newMessages;
+        });
+      },
+      () => {
+        console.log('Answer streaming completed');
+        setMessages(prev => {
+          const newMessages = [...prev];
+          const lastMsg = newMessages[newMessages.length - 1];
+          if (lastMsg && lastMsg.isStreaming) {
+            lastMsg.isStreaming = false;
+          }
+          return newMessages;
+        });
+        setIsAnswering(false);
+      },
+      (error) => {
+        console.error('Streaming error:', error);
+        setMessages(prev => [...prev, {
+          type: 'answer',
+          content: error || 'Failed to get an answer. Please try again.',
+          isError: true
+        }]);
+        setIsAnswering(false);
+      }
+    );
   };
 
   const handleExport = (format) => {

@@ -8,7 +8,7 @@ This file is part of Offline PDF Reader created by Tereza Gorgolova
 
 import os
 import logging
-from typing import Optional
+from typing import Optional, Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +133,33 @@ class LLMService:
             logger.error(f"LLM generation error: {e}")
             return f"Error generating response: {str(e)}"
 
+    def _generate_stream(self, prompt: str, max_tokens: int = 512) -> Iterator[str]:
+        """Generate text with streaming support"""
+        if not self.is_model_loaded():
+            yield "Error: Model not loaded. Please ensure a GGUF model is placed in the models directory."
+            return
+
+        try:
+            stream = self.llm(
+                prompt,
+                max_tokens=max_tokens,
+                temperature=0.7,
+                top_p=0.9,
+                echo=False,
+                stop=["</s>", "\n\nQuestion:", "\n\nContext:", "\n\nDocument:", "###"],
+                stream=True
+            )
+
+            for output in stream:
+                if output and 'choices' in output and output['choices']:
+                    token = output['choices'][0].get('text', '')
+                    if token:
+                        yield token
+
+        except Exception as e:
+            logger.error(f"LLM streaming error: {e}")
+            yield f"\n\nError: {str(e)}"
+
     def summarize(self, text: str, max_length: int = 300) -> str:
         if not text or not text.strip():
             return "No text provided for summarization."
@@ -159,16 +186,40 @@ Provide a clear summary covering the main points, key findings, and conclusions:
         if len(context) > 6000:
             context = context[:6000]
 
-        prompt = f"""Answer the following question based only on the provided context from a document.
+        prompt = f"""Based on the document context provided, answer the following question clearly and concisely.
 
-Context:
+Context from document:
 {context}
 
 Question: {question}
 
-Answer:"""
+Provide a direct, focused answer based on the information given:"""
 
         return self._generate(prompt, max_tokens=350)
+
+    def answer_question_stream(self, question: str, context: str) -> Iterator[str]:
+        """Stream answer to question"""
+        if not question or not question.strip():
+            yield "No question provided."
+            return
+
+        if not context or not context.strip():
+            yield "No context provided to answer the question."
+            return
+
+        if len(context) > 6000:
+            context = context[:6000]
+
+        prompt = f"""Based on the document context provided, answer the following question clearly and concisely.
+
+Context from document:
+{context}
+
+Question: {question}
+
+Provide a direct, focused answer based on the information given:"""
+
+        yield from self._generate_stream(prompt, max_tokens=350)
 
     def chat(self, message: str, document_context: str) -> str:
         if not message or not message.strip():

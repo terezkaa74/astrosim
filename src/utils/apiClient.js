@@ -183,6 +183,75 @@ async function askQuestion(question, context) {
   }
 }
 
+async function askQuestionStream(question, context, onChunk, onComplete, onError) {
+  const truncatedContext = context.substring(0, 6000);
+
+  try {
+    const healthCheck = await checkHealth();
+    if (!healthCheck.healthy) {
+      throw new ApiError('Backend is not available', 503);
+    }
+    if (!healthCheck.modelLoaded) {
+      throw new ApiError('LLM model is not loaded. Place a .gguf file in the models directory.', 503);
+    }
+
+    const response = await fetchWithTimeout(
+      `${BACKEND_URL}/answer-stream`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question: question.trim(),
+          context: truncatedContext,
+        }),
+      },
+      LLM_TIMEOUT
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new ApiError(errorText, response.status);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+
+      if (done) {
+        break;
+      }
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (line.trim()) {
+          try {
+            const data = JSON.parse(line);
+            if (data.chunk) {
+              onChunk(data.chunk);
+            } else if (data.error) {
+              onError(data.error);
+              return;
+            }
+          } catch (e) {
+            console.error('Failed to parse streaming response:', e);
+          }
+        }
+      }
+    }
+
+    onComplete();
+  } catch (error) {
+    console.error('Streaming question failed:', error);
+    onError(getUserFriendlyError(error));
+  }
+}
+
 function cleanSummaryText(rawSummary) {
   if (!rawSummary || typeof rawSummary !== 'string') {
     return null;
@@ -250,6 +319,7 @@ export {
   extractText,
   generateSummary,
   askQuestion,
+  askQuestionStream,
   ApiError,
   BACKEND_URL,
 };

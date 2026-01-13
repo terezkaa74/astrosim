@@ -14,9 +14,11 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, UploadFile, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import uvicorn
 from typing import Optional
+import json
 
 logging.basicConfig(
     level=logging.INFO,
@@ -170,6 +172,34 @@ async def answer_question(request: QuestionRequest):
     except Exception as e:
         logger.error(f"Question answering error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/answer-stream")
+async def answer_question_stream(request: QuestionRequest):
+    if llm_service is None or not llm_service.is_model_loaded():
+        raise HTTPException(
+            status_code=503,
+            detail="LLM model not loaded. Place a .gguf model in the models directory."
+        )
+
+    def generate():
+        try:
+            for chunk in llm_service.answer_question_stream(request.question, request.context):
+                data = json.dumps({"chunk": chunk}) + "\n"
+                yield data
+        except Exception as e:
+            logger.error(f"Streaming error: {e}")
+            error_data = json.dumps({"error": str(e)}) + "\n"
+            yield error_data
+
+    return StreamingResponse(
+        generate(),
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 @app.post("/chat")
 async def chat(request: QuestionRequest):

@@ -44,14 +44,15 @@ export default function ChatPanel({ onAskQuestion, messages, isProcessing }) {
         ) : (
           <>
             {messages.map((msg, index) => (
-              <div key={index} className={`message ${msg.type} ${msg.isError ? 'error' : ''}`}>
+              <div key={index} className={`message ${msg.type} ${msg.isError ? 'error' : ''} ${msg.isStreaming ? 'streaming' : ''}`}>
                 <div className="message-label">
-                  {msg.type === 'question' ? 'You' : msg.isError ? 'Error' : 'LLM Answer'}
+                  {msg.type === 'question' ? 'You' : msg.isError ? 'Error' : msg.isStreaming ? 'LLM Answer (streaming...)' : 'LLM Answer'}
                 </div>
                 <div className="message-content">
                   {msg.content.split('\n').map((line, i) => (
                     line.trim() && <p key={i}>{line}</p>
                   ))}
+                  {msg.isStreaming && <span className="streaming-cursor">▊</span>}
                 </div>
               </div>
             ))}
